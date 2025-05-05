@@ -1,2 +1,2 @@
 # ZapSender
-Simple Application For Whatsapp Automation
+Simple Application For Whatsapp Automation Using whatsmeow
