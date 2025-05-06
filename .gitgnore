@@ -1,0 +1,10 @@
+# Cache do Go (modulo local)
+go.sum
+
+# Diretório de cache compilado
+*.exe
+*.out
+*.test
+
+# Pasta com a minha sessão do zap
+whatsapp-session/

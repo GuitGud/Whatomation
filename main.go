@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
 	"zapsender/config"
 	"zapsender/handlers"
+	"zapsender/utils"
 	"zapsender/whatsapp"
 )
 
@@ -49,12 +51,13 @@ func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
-	// Interface simples de linha de comando
+	// Interface de linha de comando melhorada
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
-		fmt.Println("\nDigite 'enviar <número> <mensagem>' para enviar uma mensagem")
-		fmt.Println("Exemplo: enviar 5511998765432 Olá, tudo bem?")
-		fmt.Println("Digite 'sair' para encerrar")
+		fmt.Println("\nComandos disponíveis:")
+		fmt.Println("- enviar <número> <mensagem> : Envia uma mensagem")
+		fmt.Println("- bomba <número> <mensagem> <quantidade> <delay_ms> : Envio repetido de mensagens")
+		fmt.Println("- sair : Encerra o programa")
 
 		for scanner.Scan() {
 			text := scanner.Text()
@@ -62,9 +65,7 @@ func main() {
 			if text == "sair" {
 				c <- os.Interrupt
 				break
-			}
-
-			if strings.HasPrefix(text, "enviar ") {
+			} else if strings.HasPrefix(text, "enviar ") {
 				parts := strings.SplitN(text[7:], " ", 2)
 				if len(parts) != 2 {
 					fmt.Println("Formato inválido. Use: enviar <número> <mensagem>")
@@ -85,10 +86,58 @@ func main() {
 				} else {
 					fmt.Println("Mensagem enviada com sucesso!")
 				}
+			} else if strings.HasPrefix(text, "bomba ") {
+				// Formato: bomba <número> <mensagem> <quantidade> <delay_ms>
+				comandoCompleto := text[6:] // Remove "bomba "
+				partes := strings.SplitN(comandoCompleto, " ", 4)
+
+				if len(partes) < 4 {
+					fmt.Println("Formato inválido. Use: bomba <número> <mensagem> <quantidade> <delay_ms>")
+					fmt.Println("Exemplo: bomba 5511999999999 'Olá mundo!' 10 500")
+					continue
+				}
+
+				numero := partes[0]
+				mensagem := partes[1]
+				qtd, err := strconv.Atoi(partes[2])
+				if err != nil {
+					fmt.Println("Quantidade deve ser um número")
+					continue
+				}
+
+				delay, err := strconv.Atoi(partes[3])
+				if err != nil {
+					fmt.Println("Delay deve ser um número (em milissegundos)")
+					continue
+				}
+
+				// Formatar número para padrão WhatsApp se não estiver formatado
+				if !strings.Contains(numero, "@") {
+					numero = numero + "@s.whatsapp.net"
+				}
+
+				fmt.Printf("Iniciando bombardeio para %s: %d mensagens com intervalo de %dms\n",
+					numero, qtd, delay)
+
+				// Iniciar bombardeio em uma goroutine separada
+				go func() {
+					utils.MensagemBombing(client, numero, mensagem, qtd, delay)
+				}()
+
+				fmt.Println("Bombardeio iniciado em segundo plano!")
+				fmt.Println("Você pode continuar usando outros comandos.")
+
 			} else {
-				fmt.Println("Comando não reconhecido")
+				fmt.Println("Comando não reconhecido. Comandos disponíveis:")
+				fmt.Println("- enviar <número> <mensagem>")
+				fmt.Println("- bomba <número> <mensagem> <quantidade> <delay_ms>")
+				fmt.Println("- sair")
 			}
 		}
+	}()
+
+	go func() {
+		utils.SendScheduledMessage(client.WAClient)
 	}()
 
 	// Aguardar sinal de término
