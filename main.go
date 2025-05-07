@@ -93,7 +93,7 @@ func main() {
 
 				if len(partes) < 4 {
 					fmt.Println("Formato inválido. Use: bomba <número> <mensagem> <quantidade> <delay_ms>")
-					fmt.Println("Exemplo: bomba 5511999999999 'Olá mundo!' 10 500")
+					fmt.Println("Exemplo: bomba 5511999999999 'Olá' 10 500")
 					continue
 				}
 
@@ -128,6 +128,7 @@ func main() {
 				fmt.Println("Você pode continuar usando outros comandos.")
 
 			} else {
+				fmt.Println("Lembrando que a formatação atual não permite espaços na mensagem.")
 				fmt.Println("Comando não reconhecido. Comandos disponíveis:")
 				fmt.Println("- enviar <número> <mensagem>")
 				fmt.Println("- bomba <número> <mensagem> <quantidade> <delay_ms>")
