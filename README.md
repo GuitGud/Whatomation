@@ -1,4 +1,4 @@
-# ZapSender
+# Whatomation
 Simple Application For Whatsapp Automation Using whatsmeow
 
 ## Guide
