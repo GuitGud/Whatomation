@@ -8,9 +8,11 @@ import (
 	"zapsender/whatsapp"
 
 	"go.mau.fi/whatsmeow"
+	"google.golang.org/protobuf/proto"
 
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 )
 
 // MensagemBombing envia mensagens repetidamente para um número específico
@@ -106,4 +108,61 @@ func SendScheduledMessage(client *whatsmeow.Client) {
 		fmt.Println("Verificando a hora novamente em 1 minuto...")
 		time.Sleep(1 * time.Minute)
 	}
+}
+
+// Configuração para o respondedor
+type ResponderConfig struct {
+	TargetUserJID string // JID do usuário para monitorar (formato: 5511999999999@s.whatsapp.net)
+	GroupJID      string // JID do grupo para monitorar (formato: 123456789@g.us)
+	Response      string // Mensagem que será enviada como resposta
+}
+
+// MonitorarUsuarioEmGrupo inicia uma goroutine que monitora mensagens
+// de um usuário específico em um grupo específico
+func MonitorarUsuarioEmGrupo(client *whatsmeow.Client, config ResponderConfig) {
+	// Verificando os JIDs
+	targetUserJID, err := types.ParseJID(config.TargetUserJID)
+	if err != nil {
+		log.Fatalf("Erro ao parsear JID do usuário alvo: %v", err)
+	}
+
+	groupJID, err := types.ParseJID(config.GroupJID)
+	if err != nil {
+		log.Fatalf("Erro ao parsear JID do grupo: %v", err)
+	}
+
+	// Confirmar que groupJID é realmente um grupo
+	if groupJID.Server != "g.us" {
+		log.Fatalf("O JID fornecido não é um grupo: %s", config.GroupJID)
+	}
+
+	// Criar um canal para receber eventos de mensagem
+	eventHandler := func(evt interface{}) {
+		switch v := evt.(type) {
+		case *events.Message:
+			// Verificar se a mensagem veio do grupo que estamos monitorando
+			if v.Info.Chat.String() == groupJID.String() {
+				// Verificar se o remetente é o usuário que estamos monitorando
+				if v.Info.Sender.String() == targetUserJID.String() {
+					log.Printf("Mensagem recebida do usuário alvo no grupo alvo: %s", v.Message.GetConversation())
+
+					// Responder ao grupo
+					go func() {
+						_, err := client.SendMessage(context.Background(), groupJID, &waProto.Message{
+							Conversation: proto.String(config.Response),
+						})
+						if err != nil {
+							log.Printf("Erro ao enviar mensagem de resposta: %v", err)
+						} else {
+							log.Println("Resposta enviada com sucesso!")
+						}
+					}()
+				}
+			}
+		}
+	}
+
+	// Registrar o handler de eventos
+	client.AddEventHandler(eventHandler)
+	log.Printf("Monitoramento iniciado para o usuário %s no grupo %s", config.TargetUserJID, config.GroupJID)
 }

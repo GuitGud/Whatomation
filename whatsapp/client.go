@@ -114,3 +114,10 @@ func (c *Client) SendTextMessage(recipient string, message string) error {
 func (c *Client) Close() {
 	c.WAClient.Disconnect()
 }
+
+// AddCustomEventHandler adiciona um manipulador de eventos personalizado ao cliente
+// Este método é necessário para o recurso de monitoramento de usuários em grupos
+func (c *Client) AddCustomEventHandler(handler func(interface{})) {
+	// Adiciona o handler personalizado ao cliente WhatsApp
+	c.WAClient.AddEventHandler(handler)
+}

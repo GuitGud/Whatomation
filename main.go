@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"strconv"
@@ -13,13 +14,76 @@ import (
 	"zapsender/handlers"
 	"zapsender/utils"
 	"zapsender/whatsapp"
+
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 )
 
+// ResponderConfig estrutura para configurar o monitoramento de usuário em grupo
+type ResponderConfig struct {
+	TargetUserJID string // JID do usuário para monitorar (formato: 5511999999999@s.whatsapp.net)
+	GroupJID      string // JID do grupo para monitorar (formato: 123456789@g.us)
+	Response      string // Mensagem que será enviada como resposta
+}
+
+// MonitorarUsuarioEmGrupo inicia uma goroutine que monitora mensagens
+// de um usuário específico em um grupo específico
+func MonitorarUsuarioEmGrupo(client *whatsapp.Client, config ResponderConfig) {
+	targetUserJID, err := types.ParseJID(config.TargetUserJID)
+	if err != nil {
+		log.Printf("Erro ao parsear JID do usuário alvo: %v", err)
+		return
+	}
+
+	groupJID, err := types.ParseJID(config.GroupJID)
+	if err != nil {
+		log.Printf("Erro ao parsear JID do grupo: %v", err)
+		return
+	}
+
+	if groupJID.Server != "g.us" {
+		log.Printf("O JID fornecido não é um grupo válido: %s", config.GroupJID)
+		return
+	}
+
+	eventHandler := func(evt interface{}) {
+		switch v := evt.(type) {
+		case *events.Message:
+			if v.Info.Sender.String() == targetUserJID.String() {
+				log.Printf("Mensagem recebida do usuário alvo no grupo: %s", v.Message.GetConversation())
+
+				go func() {
+					err := client.SendTextMessage(targetUserJID.String(), config.Response)
+					if err != nil {
+						log.Printf("Erro ao enviar resposta automática: %v", err)
+					} else {
+						log.Println("Resposta automática enviada com sucesso!")
+					}
+				}()
+			}
+		}
+	}
+
+	client.AddCustomEventHandler(eventHandler)
+	log.Printf("Monitoramento iniciado para o usuário %s no grupo %s", config.TargetUserJID, config.GroupJID)
+}
+
+func FirstResponder(client *whatsapp.Client, numero string, mensagem string) {
+	if !strings.Contains(numero, "@") {
+		numero = numero + "@s.whatsapp.net"
+	}
+
+	err := client.SendTextMessage(numero, mensagem)
+	if err != nil {
+		log.Printf("Erro ao enviar mensagem: %v", err)
+	} else {
+		log.Println("Mensagem enviada com sucesso!")
+	}
+}
+
 func main() {
-	// Carregar configurações
 	cfg := config.NewConfig()
 
-	// Criar diretório para sessão se não existir
 	if _, err := os.Stat(cfg.SessionPath); os.IsNotExist(err) {
 		err = os.MkdirAll(cfg.SessionPath, 0755)
 		if err != nil {
@@ -28,17 +92,14 @@ func main() {
 		}
 	}
 
-	// Inicializar cliente WhatsApp
 	client, err := whatsapp.NewClient(cfg.SessionPath)
 	if err != nil {
 		fmt.Printf("Erro ao criar cliente WhatsApp: %v\n", err)
 		return
 	}
 
-	// Configurar handler de eventos
 	client.SetEventHandler(handlers.MessageHandler)
 
-	// Conectar ao WhatsApp
 	err = client.Connect()
 	if err != nil {
 		fmt.Printf("Erro ao conectar: %v\n", err)
@@ -47,17 +108,19 @@ func main() {
 
 	fmt.Println("Cliente WhatsApp conectado!")
 
-	// Configurar captura de sinais para desconexão limpa
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
-	// Interface de linha de comando melhorada
+	var monitoresAtivos []ResponderConfig
+
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
 		fmt.Println("\nComandos disponíveis:")
-		fmt.Println("- enviar <número> <mensagem> : Envia uma mensagem")
-		fmt.Println("- bomba <número> <mensagem> <quantidade> <delay_ms> : Envio repetido de mensagens")
-		fmt.Println("- sair : Encerra o programa")
+		fmt.Println("- enviar <número> <mensagem>")
+		fmt.Println("- bomba <número> <mensagem> <quantidade> <delay_ms>")
+		fmt.Println("- monitorar <número_usuário> <id_grupo> <resposta>")
+		fmt.Println("- listar_monitores")
+		fmt.Println("- sair")
 
 		for scanner.Scan() {
 			text := scanner.Text()
@@ -75,7 +138,6 @@ func main() {
 				number := parts[0]
 				message := parts[1]
 
-				// Formatar número para padrão WhatsApp se não estiver formatado
 				if !strings.Contains(number, "@") {
 					number = number + "@s.whatsapp.net"
 				}
@@ -87,13 +149,11 @@ func main() {
 					fmt.Println("Mensagem enviada com sucesso!")
 				}
 			} else if strings.HasPrefix(text, "bomba ") {
-				// Formato: bomba <número> <mensagem> <quantidade> <delay_ms>
-				comandoCompleto := text[6:] // Remove "bomba "
+				comandoCompleto := text[6:]
 				partes := strings.SplitN(comandoCompleto, " ", 4)
 
 				if len(partes) < 4 {
 					fmt.Println("Formato inválido. Use: bomba <número> <mensagem> <quantidade> <delay_ms>")
-					fmt.Println("Exemplo: bomba 5511999999999 'Olá' 10 500")
 					continue
 				}
 
@@ -101,37 +161,70 @@ func main() {
 				mensagem := partes[1]
 				qtd, err := strconv.Atoi(partes[2])
 				if err != nil {
-					fmt.Println("Quantidade deve ser um número")
+					fmt.Println("Quantidade inválida.")
 					continue
 				}
 
 				delay, err := strconv.Atoi(partes[3])
 				if err != nil {
-					fmt.Println("Delay deve ser um número (em milissegundos)")
+					fmt.Println("Delay inválido.")
 					continue
 				}
 
-				// Formatar número para padrão WhatsApp se não estiver formatado
 				if !strings.Contains(numero, "@") {
 					numero = numero + "@s.whatsapp.net"
 				}
 
-				fmt.Printf("Iniciando bombardeio para %s: %d mensagens com intervalo de %dms\n",
-					numero, qtd, delay)
+				fmt.Printf("Enviando %d mensagens para %s com intervalo de %dms\n", qtd, numero, delay)
 
-				// Iniciar bombardeio em uma goroutine separada
 				go func() {
 					utils.MensagemBombing(client, numero, mensagem, qtd, delay)
 				}()
 
-				fmt.Println("Bombardeio iniciado em segundo plano!")
-				fmt.Println("Você pode continuar usando outros comandos.")
+			} else if strings.HasPrefix(text, "monitorar ") {
+				comandoCompleto := text[10:]
+				partes := strings.SplitN(comandoCompleto, " ", 3)
 
+				if len(partes) < 3 {
+					fmt.Println("Formato inválido. Use: monitorar <número_usuário> <id_grupo> <resposta>")
+					continue
+				}
+
+				numeroUsuario := partes[0]
+				idGrupo := partes[1]
+				resposta := partes[2]
+
+				if !strings.Contains(numeroUsuario, "@") {
+					numeroUsuario = numeroUsuario + "@s.whatsapp.net"
+				}
+
+				config := ResponderConfig{
+					TargetUserJID: numeroUsuario,
+					GroupJID:      idGrupo,
+					Response:      resposta,
+				}
+
+				monitoresAtivos = append(monitoresAtivos, config)
+				go MonitorarUsuarioEmGrupo(client, config)
+
+				fmt.Printf("Monitoramento iniciado para o usuário %s no grupo %s\n", numeroUsuario, idGrupo)
+
+			} else if text == "listar_monitores" {
+				if len(monitoresAtivos) == 0 {
+					fmt.Println("Não há monitores ativos no momento.")
+				} else {
+					fmt.Println("\nMonitores ativos:")
+					for i, monitor := range monitoresAtivos {
+						fmt.Printf("%d. Usuário: %s | Grupo: %s | Resposta: %s\n",
+							i+1, monitor.TargetUserJID, monitor.GroupJID, monitor.Response)
+					}
+				}
 			} else {
-				fmt.Println("Lembrando que a formatação atual não permite espaços na mensagem.")
 				fmt.Println("Comando não reconhecido. Comandos disponíveis:")
 				fmt.Println("- enviar <número> <mensagem>")
 				fmt.Println("- bomba <número> <mensagem> <quantidade> <delay_ms>")
+				fmt.Println("- monitorar <número_usuário> <id_grupo> <resposta>")
+				fmt.Println("- listar_monitores")
 				fmt.Println("- sair")
 			}
 		}
@@ -141,9 +234,8 @@ func main() {
 		utils.SendScheduledMessage(client.WAClient)
 	}()
 
-	// Aguardar sinal de término
 	<-c
 	fmt.Println("\nEncerrando cliente...")
 	client.Close()
-	fmt.Println("Cliente encerrado. Até mais!")
+	fmt.Println("Cliente encerrado. Até logo!")
 }
